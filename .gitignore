@@ -50,3 +50,7 @@ modules.order
 Module.symvers
 Mkfile.old
 dkms.conf
+
+/tags
+/fuzz/fuzzer_example
+/tests/pl7m_test
