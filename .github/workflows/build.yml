@@ -1,0 +1,31 @@
+name: Build
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+    types: [opened, synchronize, reopened]
+  release:
+    types: [created]
+jobs:
+  tests:
+    name: Tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+      - name: Install Ubuntu Prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install libpcap-dev
+      - name: Run Scripts
+        run: |
+          cd tests/
+          make clean && make
+          ./run-utests.sh
+          cd ../fuzz
+          make clean && make
+          ./run-fuzzer.sh
