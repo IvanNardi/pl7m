@@ -18,6 +18,7 @@ for f in $PCAPS; do
 			echo "$f Diff Error"
 			RC=$(( RC + 1 ))
 			#diff <(xxd ./results/$f.fuzzed) <(xxd $OUTPUT)
+			#cp $OUTPUT ./results/$f.fuzzed
 		fi
 	else
 		echo "%f Error!"
