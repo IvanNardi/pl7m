@@ -907,6 +907,8 @@ static void do_pkt_actions(struct pl7m_handle *h)
 			ddbg("Action dup\n");
 			d = __dup_pkt(p);
 			__add_pkt(h, d, prev, p);
+			p->skip_payload_actions = 1;
+			d->skip_payload_actions = 1;
 			prev = p;
 			break;
 		case 3: /* Swap */
@@ -915,11 +917,13 @@ static void do_pkt_actions(struct pl7m_handle *h)
 				prev = tmp_prev;
 			else
 				prev = p;
+			p->skip_payload_actions = 1;
 			break;
 		case 4: /* Swap direction */
 			ddbg("Swap direction\n");
 			swap_direction(p);
 			prev = p;
+			p->skip_payload_actions = 1;
 			break;
 		}
 		if (prev)
