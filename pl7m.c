@@ -119,6 +119,8 @@ struct m_pkt {
 	struct pcap_pkthdr header;
 
 	int l2_offset;
+	int prev_l3_offset;
+	u_int16_t prev_l3_proto;
 	int l3_offset;
 	u_int16_t l3_proto;
 	int l4_offset;
@@ -353,6 +355,8 @@ static int dissect_l3(struct m_pkt *p)
 	unsigned char *data = p->raw_data + p->l3_offset;
 	int data_len = p->header.caplen - p->l3_offset;
 
+	ddbg("L3: l3_proto %d data_len %d\n", p->l3_proto, data_len);
+
 	if (data_len < 0)
 		return -1;
 
@@ -484,7 +488,9 @@ static int dissect_l4(struct m_pkt *p)
 	struct tcphdr *tcp_h;
 	unsigned char *data = p->raw_data + p->l4_offset;
 	int data_len = p->header.caplen - p->l4_offset;
-	int l4_hdr_len;
+	int l4_hdr_len, rc;
+
+	ddbg("L4: l4_proto %d data_len %d\n", p->l4_proto, data_len);
 
 	if (data_len < 0)
 		return -1;
@@ -529,16 +535,24 @@ static int dissect_l4(struct m_pkt *p)
 		break;
 
 	case IPPROTO_IPV4: /* IP in IP tunnel */
-		p->l3_offset = p->l4_offset;
-		p->l3_proto = ETH_P_IP;
-		p->skip_payload_actions = 1; /* TODO: we need to update 2 ip headers... */
-		return dissect_l3(p);
-
 	case IPPROTO_IPV6: /* IP in IP tunnel */
+		if (p->prev_l3_proto == 0) {
+			assert(p->prev_l3_offset == 0);
+			p->prev_l3_proto = p->l3_proto;
+			p->prev_l3_offset = p->l3_offset;
+		} else {
+			derr("More than 2 ip headers. Unsupported\n");
+			return -1;
+		}
 		p->l3_offset = p->l4_offset;
-		p->l3_proto = ETH_P_IPV6;
-		p->skip_payload_actions = 1; /* TODO: we need to update 2 ip headers...  */
-		return dissect_l3(p);
+		p->l3_proto = (p->l4_proto == IPPROTO_IPV4) ? ETH_P_IP : ETH_P_IPV6;
+		rc = dissect_l3(p);
+		if (rc != 0) {
+			derr("Error dissect_l3 (second header)\n");
+			return -1;
+		}
+		return dissect_l4(p);
+
 
 	default:
 		/* Fuzz also the L4 header itself, but leave at least 1 byte:
@@ -655,6 +669,9 @@ static void update_do_l7(struct m_pkt *p)
 	struct tcphdr *tcp_h;
 	size_t new_l5_len;
 	int l4_header_len = 0;
+	int l5_len_diff;
+	struct ip *ip4;
+	struct ip6_hdr *ip6;
 
 	assert(p->l5_offset + p->l5_length <= (int)p->header.caplen);
 	assert(p->header.caplen <= MAX_PKT_LENGTH);
@@ -677,7 +694,8 @@ static void update_do_l7(struct m_pkt *p)
 					   p->l5_length,
 					   MAX_PKT_LENGTH - p->l5_offset);
 #endif
-	ddbg("l5_len %u->%zu\n", p->l5_length, new_l5_len);
+	l5_len_diff = new_l5_len - p->l5_length;
+	ddbg("l5_len %u->%zu (%d)\n", p->l5_length, new_l5_len, l5_len_diff);
 
 	switch (p->l4_proto) {
 	case IPPROTO_UDP:
@@ -696,19 +714,25 @@ static void update_do_l7(struct m_pkt *p)
 	}
 
 	if (p->l3_proto == ETH_P_IP) {
-		struct ip *ip4;
-
 		ip4 = (struct ip *)(p->raw_data + p->l3_offset);
 		ip4->ip_len = htons(ip4->ip_hl * 4 + l4_header_len + new_l5_len);
 	} else {
-		struct ip6_hdr *ip6;
-
 		assert(p->l3_proto == ETH_P_IPV6);
 		ip6 = (struct ip6_hdr *)(p->raw_data + p->l3_offset);
 		/* We need to take into account existing extension headers */
 		assert(p->l4_offset - p->l3_offset - (int)sizeof(struct ip6_hdr) >= 0);
 		ip6->ip6_plen = htons((p->l4_offset - p->l3_offset - sizeof(struct ip6_hdr)) +
 				      l4_header_len + new_l5_len);
+	}
+
+	/* Update previous ip header */
+	if(p->prev_l3_proto == ETH_P_IP) {
+		ip4 = (struct ip *)(p->raw_data + p->prev_l3_offset);
+		ip4->ip_len = htons(htons(ip4->ip_len) + l5_len_diff);
+
+	} else if(p->prev_l3_proto == ETH_P_IPV6) {
+		ip6 = (struct ip6_hdr *)(p->raw_data + p->prev_l3_offset);
+		ip6->ip6_plen = htons(ntohs(ip6->ip6_plen) + l5_len_diff);
 	}
 
 	p->l5_length = new_l5_len;
@@ -788,6 +812,8 @@ static void swap_direction(struct m_pkt *p)
 		ip6->ip6_dst = tmp_ip6;
 	}
 
+	/* We probably don't need to swap direction of previous
+	   ip header (if any) */
 }
 
 static struct m_pkt *__dup_pkt(struct m_pkt *p)
@@ -805,6 +831,9 @@ static struct m_pkt *__dup_pkt(struct m_pkt *p)
 	memcpy(n->raw_data, p->raw_data, p->header.caplen);
 	n->header = p->header;
 	n->l2_offset = p->l2_offset;
+	n->prev_l3_offset = p->prev_l3_offset;
+	n->prev_l3_proto = p->prev_l3_proto;
+	n->l4_offset = p->l4_offset;
 	n->l3_offset = p->l3_offset;
 	n->l3_proto = p->l3_proto;
 	n->l4_offset = p->l4_offset;
@@ -912,6 +941,7 @@ static void do_pkt_actions(struct pl7m_handle *h)
 			prev = p;
 			break;
 		case 3: /* Swap */
+			ddbg("Action swap\n");
 			tmp_prev = p->next;
 			if (__swap_pkt(h, p, prev, p->next))
 				prev = tmp_prev;
@@ -937,9 +967,10 @@ static void do_payload_actions(struct pl7m_handle *h)
 {
 	struct m_pkt *p;
 
+	ddbg("Payload Actions\n");
+
 	p = h->head;
 	while (p) {
-		ddbg("Payload Action mutate\n");
 		if (!p->skip_payload_actions)
 			update_do(p);
 		p = p->next;
