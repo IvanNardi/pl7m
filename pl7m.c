@@ -125,6 +125,7 @@ struct m_pkt {
 	u_int16_t l3_proto;
 	int l4_offset;
 	u_int8_t l4_proto;
+	int l4_length;
 	int l5_offset;
 	int l5_length;
 
@@ -366,8 +367,10 @@ static int dissect_l3(struct m_pkt *p)
 		if (ip4->ip_v != 4 ||
 		    data_len < 20 /* min */ ||
 		    ip4->ip_hl < 5 ||
-		    data_len < ip4->ip_hl * 4) {
-			derr("Wrong lengths %d %d\n", data_len, ip4->ip_hl);
+		    data_len < ip4->ip_hl * 4 ||
+		    ntohs(ip4->ip_len) < ip4->ip_hl * 4) {
+			derr("Wrong lengths %d %d %d\n", data_len, ip4->ip_hl,
+			     ntohs(ip4->ip_len));
 			return -1;
 		}
 		/* TODO: properly handle fragments */
@@ -383,6 +386,7 @@ static int dissect_l3(struct m_pkt *p)
 		}
 		p->l4_proto = ip4->ip_p;
 		p->l4_offset = p->l3_offset + ip4->ip_hl * 4;
+		p->l4_length = ntohs(ip4->ip_len) - ip4->ip_hl * 4;
 		break;
 
 	case ETH_P_IPV6:
@@ -470,6 +474,7 @@ static int dissect_l3(struct m_pkt *p)
 		}
 		p->l4_proto = ip6->ip6_nxt;
 		p->l4_offset = p->l3_offset + ip_hdr_len;
+		p->l4_length = ntohs(ip6->ip6_plen) - (ip_hdr_len - sizeof(struct ip6_hdr));
 		break;
 
 	case ETH_P_ARP:
@@ -490,9 +495,10 @@ static int dissect_l4(struct m_pkt *p)
 	int data_len = p->header.caplen - p->l4_offset;
 	int l4_hdr_len, rc;
 
-	ddbg("L4: l4_proto %d data_len %d\n", p->l4_proto, data_len);
+	ddbg("L4: l4_proto %d data_len %d l4_length %d\n",
+	     p->l4_proto, data_len, p->l4_length);
 
-	if (data_len < 0)
+	if (data_len < 0 || p->l4_length > data_len)
 		return -1;
 
 	if (p->is_l3_fragment) {
@@ -507,11 +513,11 @@ static int dissect_l4(struct m_pkt *p)
 	switch(p->l4_proto) {
 	case IPPROTO_UDP:
 		udp_h = (struct udphdr *)data;
-		if (data_len < (int)sizeof(struct udphdr) ||
-		    ntohs(udp_h->len) > data_len ||
+		if (p->l4_length < (int)sizeof(struct udphdr) ||
+		    ntohs(udp_h->len) > p->l4_length ||
 		    ntohs(udp_h->len) < sizeof(struct udphdr)) {
 			derr("Unexpected udp len %u vs %u\n",
-			     ntohs(udp_h->len), data_len);
+			     ntohs(udp_h->len), p->l4_length);
 			return -1;
 		}
 		p->l5_offset = p->l4_offset + sizeof(struct udphdr);
@@ -519,19 +525,19 @@ static int dissect_l4(struct m_pkt *p)
 		break;
 	case IPPROTO_TCP:
 		tcp_h = (struct tcphdr *)data;
-		if (data_len < (int)sizeof(struct tcphdr)) {
-			derr("Unexpected tcp len %u\n", data_len);
+		if (p->l4_length < (int)sizeof(struct tcphdr)) {
+			derr("Unexpected tcp len %d\n", p->l4_length);
 			return -1;
 		}
 		l4_hdr_len = tcp_h->doff << 2;
 		if (l4_hdr_len < (int)sizeof(struct tcphdr) ||
-		    l4_hdr_len > data_len) {
+		    l4_hdr_len > p->l4_length) {
 			derr("Unexpected tcp len %u %u\n",
-			     l4_hdr_len, data_len);
+			     l4_hdr_len, p->l4_length);
 			return -1;
 		}
 		p->l5_offset = p->l4_offset + l4_hdr_len;
-		p->l5_length = data_len - l4_hdr_len;
+		p->l5_length = p->l4_length - l4_hdr_len;
 		break;
 
 	case IPPROTO_IPV4: /* IP in IP tunnel */
@@ -557,10 +563,10 @@ static int dissect_l4(struct m_pkt *p)
 	default:
 		/* Fuzz also the L4 header itself, but leave at least 1 byte:
 		   this way, we will never have an empty ip4/6 header */
-		if (data_len == 0)
+		if (p->l4_length == 0)
 			return -1;
 		p->l5_offset = p->l4_offset + 1;
-		p->l5_length = data_len - 1;
+		p->l5_length = p->l4_length - 1;
 		break;
 	}
 	return 0;
@@ -715,14 +721,11 @@ static void update_do_l7(struct m_pkt *p)
 
 	if (p->l3_proto == ETH_P_IP) {
 		ip4 = (struct ip *)(p->raw_data + p->l3_offset);
-		ip4->ip_len = htons(ip4->ip_hl * 4 + l4_header_len + new_l5_len);
+		ip4->ip_len = htons(htons(ip4->ip_len) + l5_len_diff);
 	} else {
 		assert(p->l3_proto == ETH_P_IPV6);
 		ip6 = (struct ip6_hdr *)(p->raw_data + p->l3_offset);
-		/* We need to take into account existing extension headers */
-		assert(p->l4_offset - p->l3_offset - (int)sizeof(struct ip6_hdr) >= 0);
-		ip6->ip6_plen = htons((p->l4_offset - p->l3_offset - sizeof(struct ip6_hdr)) +
-				      l4_header_len + new_l5_len);
+		ip6->ip6_plen = htons(ntohs(ip6->ip6_plen) + l5_len_diff);
 	}
 
 	/* Update previous ip header */
@@ -838,6 +841,7 @@ static struct m_pkt *__dup_pkt(struct m_pkt *p)
 	n->l3_proto = p->l3_proto;
 	n->l4_offset = p->l4_offset;
 	n->l4_proto = p->l4_proto;
+	n->l4_length = p->l4_length;
 	n->l5_offset = p->l5_offset;
 	n->l5_length = p->l5_length;
 	n->is_l3_fragment = p->is_l3_fragment;
