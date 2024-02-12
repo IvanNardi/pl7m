@@ -13,15 +13,15 @@ for f in $PCAPS; do
 	if [ $CMD_RET -eq 0 ]; then
 		NUM_DIFF=`diff <(xxd ./results/$f.fuzzed) <(xxd $OUTPUT) | wc -l`
 		if [ $NUM_DIFF -eq 0 ]; then
-			echo "$f OK"
+			printf "%-48s\tOK\n" "$f"
 		else
-			echo "$f Diff Error"
+			printf "%-48s\tERROR\n" "$f"
 			RC=$(( RC + 1 ))
 			#diff <(xxd ./results/$f.fuzzed) <(xxd $OUTPUT)
 			#cp $OUTPUT ./results/$f.fuzzed
 		fi
 	else
-		echo "%f Error!"
+		printf "%-48s\tERROR\n" "$f"
 		RC=$(( RC + 1 ))
 	fi
 
