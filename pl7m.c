@@ -34,6 +34,8 @@ SOFTWARE.
 #include <netinet/udp.h>
 #include <netinet/tcp.h>
 #include <pcap.h>
+#include <asm/byteorder.h>
+#include <linux/ppp_defs.h>
 
 #include "pl7m.h"
 
@@ -113,6 +115,34 @@ extern "C"
 #ifndef PL7M_USE_INTERNAL_FUZZER_MUTATE
 size_t LLVMFuzzerMutate(uint8_t *Data, size_t Size, size_t MaxSize);
 #endif
+
+
+struct gre_header {
+#if defined(__LITTLE_ENDIAN_BITFIELD)
+	u_int16_t rec:3,
+		  srr:1,
+		  seq:1,
+		  key:1,
+		  routing:1,
+		  csum:1,
+		  version:3,
+		  reserved:4,
+		  ack:1;
+#elif defined(__BIG_ENDIAN_BITFIELD)
+	u_int16_t csum:1,
+		  routing:1,
+		  key:1,
+		  seq:1,
+		  srr:1,
+		  rec:3,
+		  ack:1,
+		  reserved:4,
+		  version:3;
+#else
+#error "Adjust your <asm/byteorder.h> defines"
+#endif
+    __u16	protocol;
+};
 
 struct m_pkt {
 	unsigned char *raw_data;
@@ -491,9 +521,12 @@ static int dissect_l4(struct m_pkt *p)
 {
 	struct udphdr *udp_h;
 	struct tcphdr *tcp_h;
+	struct gre_header *gre_h;
 	unsigned char *data = p->raw_data + p->l4_offset;
 	int data_len = p->header.caplen - p->l4_offset;
 	int l4_hdr_len, rc;
+	unsigned char *ppp_h;
+	u_int16_t ppp_proto;
 
 	ddbg("L4: l4_proto %d data_len %d l4_length %d\n",
 	     p->l4_proto, data_len, p->l4_length);
@@ -559,6 +592,82 @@ static int dissect_l4(struct m_pkt *p)
 		}
 		return dissect_l4(p);
 
+	case IPPROTO_GRE:
+		gre_h = (struct gre_header *)data;
+		if (p->l4_length < (int)sizeof(struct gre_header)) {
+			derr("Unexpected gre len %d\n", p->l4_length);
+			return -1;
+		}
+		/* Check version. 0 = GRE, 1 = ENHANCED GRE (used for PPTP) */
+		if((gre_h->version != 0 && gre_h->version != 1) ||
+		   (gre_h->version == 1 && ntohs(gre_h->protocol) != 0x880b)) {
+			derr("Unexpected gre version %d\n", gre_h->version);
+			return -1;
+		}
+		l4_hdr_len = sizeof(struct gre_header);
+		if (gre_h->key)
+			l4_hdr_len += 4;
+		if (gre_h->seq)
+			l4_hdr_len += 4;
+		if (gre_h->csum || gre_h->routing)
+			l4_hdr_len += 4;
+		if (gre_h->ack)
+			l4_hdr_len += 4;
+		if (p->l4_length < l4_hdr_len) {
+			derr("Unexpected gre len %d/%d\n", l4_hdr_len, p->l4_length);
+			return -1;
+		}
+
+		if (p->prev_l3_proto == 0) {
+			assert(p->prev_l3_offset == 0);
+			p->prev_l3_proto = p->l3_proto;
+			p->prev_l3_offset = p->l3_offset;
+		} else {
+			derr("More than 2 ip headers. Unsupported\n");
+			return -1;
+		}
+
+		if(gre_h->version == 0) {
+			p->l3_proto = ntohs(gre_h->protocol);
+			if(p->l3_proto == 0 && l4_hdr_len == p->l4_length) {
+				derr("GRE keepalive\n");
+				return -1;
+			}
+		} else {
+			ppp_h = &data[l4_hdr_len];
+
+			if (ppp_h[0] == 0xFF) { /* PPP HDLC encapsulation */
+				if(p->l4_length < l4_hdr_len + 4) {
+					derr("Unexpected gre ppp len %d/%d\n",
+					     l4_hdr_len, p->l4_length);
+					return -1;
+				}
+				ppp_proto = ntohs(*(u_int16_t *)(ppp_h + 2));
+				l4_hdr_len += 4;
+			} else {		/* Address and control are compressed */
+				ppp_proto = ppp_h[0];
+				l4_hdr_len += 1;
+			}
+
+			switch (ppp_proto) {
+			case PPP_IP:
+				p->l3_proto = ETH_P_IP;
+				break;
+			case PPP_IPV6:
+				p->l3_proto = ETH_P_IPV6;
+				break;
+			default:
+				derr("Unexpected ppp proto %d\n", ppp_proto);
+				return -1;
+			}
+		}
+		p->l3_offset = p->l4_offset + l4_hdr_len;
+		rc = dissect_l3(p);
+		if (rc != 0) {
+			derr("Error dissect_l3 (after gre)\n");
+			return -1;
+		}
+		return dissect_l4(p);
 
 	default:
 		/* Fuzz also the L4 header itself, but leave at least 1 byte:
