@@ -58,7 +58,7 @@ int main(int argc, char *argv[])
 	if (argc == 4) {
 		seed = strtol(argv[3], &endptr, 0);
 	} else {
-		seed = 0xabcdef01;
+		seed = 0xABCDABCE;
 	}
 
 	f_out = fopen(out_file, "w");

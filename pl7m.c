@@ -479,7 +479,12 @@ static int dissect_l3(struct m_pkt *p)
 				/* RFC2460 4.3. Hdr Ext Len: Length of the Hop-by-Hop
 				   Options header in 8-octet units, not including
 				   the first 8 octets */
-				ip_hdr_len += (6 + ipv6_opt->ip6e_len * 8);
+				ip_hdr_len += (8 + ipv6_opt->ip6e_len * 8);
+			} else if (p->l4_proto == IPPROTO_ROUTING) {
+				/* RFC8200 4.4. Hdr Ext Len:  Length of the Routing
+				   header in 8-octet units, not including the
+				   first 8 octets. */
+				ip_hdr_len += (8 + ipv6_opt->ip6e_len * 8);
 			} else {
 				if (p->l4_proto != IPPROTO_FRAGMENT) {
 					ip_hdr_len += ipv6_opt->ip6e_len;
@@ -1031,67 +1036,48 @@ static void __free_m_pkts(struct pl7m_handle *h)
 	free(h);
 }
 
-static void do_pkt_actions(struct pl7m_handle *h)
+static struct m_pkt *do_pkt_actions(struct pl7m_handle *h, struct m_pkt *p, struct m_pkt **prev)
 {
 	int r;
-	struct m_pkt *p, *prev, *d, *tmp_prev;
+	struct m_pkt *d, *tmp_prev;
 
-	p = h->head;
-	prev = NULL;
-	while (p) {
-		r = rand();
-		switch (r % 5) {
-		case 0: /* Unchange */
-			ddbg("Action unchange\n");
-			prev = p;
-			break;
-		case 1: /* Drop */
-			ddbg("Action drop\n");
-			__del_pkt(h, p, prev);
-			break;
-		case 2: /* Duplicate */
-			ddbg("Action dup\n");
-			d = __dup_pkt(p);
-			__add_pkt(h, d, prev, p);
-			p->skip_payload_actions = 1;
-			d->skip_payload_actions = 1;
-			prev = p;
-			break;
-		case 3: /* Swap */
-			ddbg("Action swap\n");
-			tmp_prev = p->next;
-			if (__swap_pkt(h, p, prev, p->next))
-				prev = tmp_prev;
-			else
-				prev = p;
-			p->skip_payload_actions = 1;
-			break;
-		case 4: /* Swap direction */
-			ddbg("Swap direction\n");
-			swap_direction(p);
-			prev = p;
-			p->skip_payload_actions = 1;
-			break;
-		}
-		if (prev)
-			p = prev->next;
+	r = rand();
+	switch (r % 4) {
+	case 0: /* Drop */
+		ddbg("Action drop\n");
+		__del_pkt(h, p, *prev);
+		break;
+	case 1: /* Duplicate */
+		ddbg("Action dup\n"); /* Both pkts don't trigger a payload action */
+		d = __dup_pkt(p);
+		__add_pkt(h, d, *prev, p);
+		*prev = p;
+		break;
+	case 2: /* Swap */
+		ddbg("Action swap\n");  /* Both pkts don't trigger a payload action */
+		tmp_prev = p->next;
+		if (__swap_pkt(h, p, *prev, p->next))
+			*prev = p;
 		else
-			p = h->head;
+			*prev = tmp_prev;
+		break;
+	case 3: /* Swap direction */
+		ddbg("Action swap direction\n");
+		swap_direction(p);
+		*prev = p;
+		break;
 	}
+	if (*prev)
+		return (*prev)->next;
+	return h->head;
 }
 
-static void do_payload_actions(struct pl7m_handle *h)
+static void do_payload_actions(struct m_pkt *p)
 {
-	struct m_pkt *p;
-
-	ddbg("Payload Actions\n");
-
-	p = h->head;
-	while (p) {
-		if (!p->skip_payload_actions)
-			update_do(p);
-		p = p->next;
-	}
+	if (!p->skip_payload_actions)
+		update_do(p);
+	else
+		ddbg("Skip payload action\n");
 }
 
 static size_t __serialize_to_fd(struct pl7m_handle *h, FILE *fd_out,
@@ -1260,13 +1246,41 @@ static struct pl7m_handle *__deserialize(const unsigned char *data,
 
 static void __mutate(struct pl7m_handle *h, unsigned int seed)
 {
+	int r;
+	struct m_pkt *p, *prev;
+
 	srand(seed);
+
+	p = h->head;
+	prev = NULL;
+	while (p) {
+		r = rand();
+		/* TODO: do these ratios [33%, 33%, 33%] make sense? */
+		switch (r % 3) {
+		case 0:
+			ddbg("Mutate: unchange\n");
+			prev = p;
+			p = p->next;
+			break;
+		case 1:
+			ddbg("Mutate: packet action\n");
 #ifndef PL7M_DISABLE_PACKET_MUTATION
-	do_pkt_actions(h);
+			p = do_pkt_actions(h, p, &prev);
+#else
+			prev = p;
+			p = p->next;
 #endif
+			break;
+		case 2:
+			ddbg("Mutate: payload action\n");
 #ifndef PL7M_DISABLE_PAYLOAD_MUTATION
-	do_payload_actions(h);
+			do_payload_actions(p);
 #endif
+			prev = p;
+			p = p->next;
+			break;
+		}
+	}
 }
 
 /* Public functions */

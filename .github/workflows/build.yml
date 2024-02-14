@@ -27,11 +27,11 @@ jobs:
           make clean && make
           ./run-utests.sh
           cd ../fuzz
-          make clean && make
+          make clean && CFLAGS="-DPL7M_ENABLE_ERROR" make
+          ./run-fuzzer.sh
+          make clean && CFLAGS="-DPL7M_USE_INTERNAL_FUZZER_MUTATE -DPL7M_ENABLE_ERROR" make
           ./run-fuzzer.sh
           make clean && CFLAGS="-DPL7M_USE_INTERNAL_FUZZER_MUTATE -DPL7M_USE_SIMPLEST_MUTATOR" make
-          ./run-fuzzer.sh
-          make clean && CFLAGS="-DPL7M_USE_INTERNAL_FUZZER_MUTATE" make
           ./run-fuzzer.sh
           make clean && CFLAGS="-DPL7M_USE_SIMPLEST_MUTATOR" make
           ./run-fuzzer.sh
