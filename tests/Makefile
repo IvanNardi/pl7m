@@ -1,7 +1,7 @@
 CC = clang
 
 CFLAGS += -W -Wall -Wextra -O3 -g -I../ -DDEBUG -fno-omit-frame-pointer
-CFLAGS += -DPL7M_USE_INTERNAL_FUZZER_MUTATE -DPL7M_ENABLE_ERROR #-DPL7M_ENABLE_LOG
+CFLAGS += -DPL7M_USE_INTERNAL_FUZZER_MUTATE -DPL7M_USE_64K_PACKETS -DPL7M_ENABLE_ERROR #-DPL7M_ENABLE_LOG
 CFLAGS += -fsanitize=address,undefined -fno-sanitize=alignment
 #CFLAGS += -fsanitize=memory
 
