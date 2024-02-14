@@ -599,8 +599,8 @@ static int dissect_l4(struct m_pkt *p)
 			return -1;
 		}
 		/* Check version. 0 = GRE, 1 = ENHANCED GRE (used for PPTP) */
-		if((gre_h->version != 0 && gre_h->version != 1) ||
-		   (gre_h->version == 1 && ntohs(gre_h->protocol) != 0x880b)) {
+		if ((gre_h->version != 0 && gre_h->version != 1) ||
+		    (gre_h->version == 1 && ntohs(gre_h->protocol) != 0x880b)) {
 			derr("Unexpected gre version %d\n", gre_h->version);
 			return -1;
 		}
@@ -627,10 +627,14 @@ static int dissect_l4(struct m_pkt *p)
 			return -1;
 		}
 
-		if(gre_h->version == 0) {
+		if (gre_h->version == 0) {
 			p->l3_proto = ntohs(gre_h->protocol);
-			if(p->l3_proto == 0 && l4_hdr_len == p->l4_length) {
+			if (p->l3_proto == 0 && l4_hdr_len == p->l4_length) {
 				derr("GRE keepalive\n");
+				return -1;
+			}
+			if (p->l3_proto != ETH_P_IP && p->l3_proto != ETH_P_IPV6) {
+				derr("Invalid L3 after GRE: 0x%x\n", p->l3_proto);
 				return -1;
 			}
 		} else {
