@@ -64,6 +64,10 @@ extern "C"
 	  and with the same timestamp) of the input trace
 	* PL7M_DISABLE_PAYLOAD_MUTATION: disable mutations at payload level
 	  (see below)
+	* PL7M_USE_64K_PACKETS: allow packets with maximum size (~64k) instead of
+	  the standard size (~1526). Useful for handling TSO packets or for
+	  checking integer overflow on u_int16_t variables (i.e. ip length...).
+	  Note that this option might lead to bigger corpus
 
 	Mutations happens at two different levels:
 	* packet level: each packet might be dropped, duplicated, swapped or
@@ -110,7 +114,11 @@ extern "C"
 #endif
 
 
-#define MAX_PKT_LENGTH	1024 * 32	/* It is so big to handle TSO packets */
+#ifdef PL7M_USE_64K_PACKETS
+#define MAX_PKT_LENGTH	(26 + 20 + 1024 * 64)	/* Max possible size: ethernet + ip(v4) + 64k ip payload */
+#else
+#define MAX_PKT_LENGTH	(26 + 1500)		/* "Standard" maximum packet size */
+#endif
 
 #ifndef PL7M_USE_INTERNAL_FUZZER_MUTATE
 size_t LLVMFuzzerMutate(uint8_t *Data, size_t Size, size_t MaxSize);
