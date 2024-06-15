@@ -67,11 +67,11 @@ extern "C"
 	* PL7M_USE_64K_PACKETS: allow packets with maximum size (~64k) instead of
 	  the standard size (~1526). Useful for handling TSO packets or for
 	  checking integer overflow on u_int16_t variables (i.e. ip length...).
-	  Note that this option might lead to bigger corpus
+	  Note that this option might lead to significant bigger corpus
 
 	Mutations happens at two different levels:
 	* packet level: each packet might be dropped, duplicated, swapped or
-	   its direction might be swapped
+	   its direction might be swapped (i.e. from client->server to server->client)
 	* payload level: packet (L5/7) payload (i.e. data after TCP/UDP header)
 	  is changed
 */
@@ -729,50 +729,32 @@ static size_t internal_FuzzerMutate(uint8_t *Data, size_t Size, size_t MaxSize)
 {
 	int r;
 	unsigned char rand_byte;
-	size_t new_len = Size, bytes_to_zero, offset;
+	size_t new_len = Size, offset;
 
 	r = rand();
-	switch (r % 8) {
-	case 0: /* Unchange */
-		ddbg("Payload action unchange\n");
+	switch (r % 5) {
+	case 0:
+		ddbg("Payload action: unchange\n");
 		new_len = Size;
 		break;
-	case 1: /* Remove last bytes */
-		ddbg("Payload action remove last bytes\n");
-		if (Size > 0)
-			new_len = rand() % Size;
-		break;
-	case 2: /* Remove first bytes */
-		ddbg("Payload action remove first bytes\n");
+	case 1:
+		ddbg("Payload action: change one byte at a random location\n");
 		if (Size > 0) {
-			new_len = rand() % Size;
-			memmove(Data, Data + (Size - new_len), new_len);
+			offset = rand() % Size;
+			rand_byte =  rand() % 255;
+			Data[offset] = rand_byte;
 		}
 		break;
-	case 3: /* Append zero bytes */
-		ddbg("Payload action append zero bytes\n");
+	case 2:
+		ddbg("Payload action: append zero bytes\n");
 		new_len = rand() % MaxSize;
 		if (new_len > Size)
 			memset(&Data[Size], '\0', new_len - Size);
 		else
 			new_len = Size;
 		break;
-	case 4: /* Zero first bytes */
-		ddbg("Payload action zero first bytes\n");
-		if (Size > 0) {
-			bytes_to_zero = rand() % Size;
-			memset(Data, '\0', bytes_to_zero);
-		}
-		break;
-	case 5: /* Zero last bytes */
-		ddbg("Payload action zero last bytes\n");
-		if (Size > 0) {
-			bytes_to_zero = rand() % Size;
-			memset(Data + (Size - bytes_to_zero), '\0', bytes_to_zero);
-		}
-		break;
-	case 6:
-		ddbg("Add a random byte at random location\n");
+	case 3:
+		ddbg("Payload action: add one random byte at random location\n");
 		if (MaxSize >= Size + 1) {
 			offset = Size == 0 ? 0 : rand() % Size;
 			rand_byte =  rand() % 255;
@@ -781,8 +763,8 @@ static size_t internal_FuzzerMutate(uint8_t *Data, size_t Size, size_t MaxSize)
 			Data[offset] = rand_byte;
 		}
 		break;
-	case 7:
-		ddbg("Remove the byte from a random location\n");
+	case 4:
+		ddbg("Payload action: remove one byte from a random location\n");
 		if (Size > 0) {
 			offset = rand() % Size;
 			new_len = Size - 1;
