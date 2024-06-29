@@ -3,7 +3,7 @@
 Pl7m is a custom mutator (used for [structure aware fuzzing](https://github.com/google/fuzzing/blob/master/docs/structure-aware-fuzzing.md)) for network traffic packet captures (i.e. pcap files).
 
 The output of the mutator is always a valid pcap file, containing the same flows/sessions of the input file.
-That's it: the mutator only changes the packet payload after the TCP/UDP header, keeping all the original L2/L3 information (IP addresses and L4 ports).
+That's it: the mutator only changes the packet payload after the TCP/UDP header, keeping all the original L2/L3/L4 information (IP addresses and L4 ports).
 
 This might be useful if you are dealing with pcap files and you want to fuzz some applications at the protocol layer, for example in the deep packet inspection engines or for protocol analysis.
 
@@ -37,3 +37,7 @@ Note that, even if the documentation/code only cites libfuzzer, you can easily u
 ## Known limitations
 
 * Better support for TCP flows: we might need to update sequence/ack numbers in the TCP header
+
+## Used by
+
+* [nDPI](https://github.com/ntop/nDPI)
