@@ -402,8 +402,8 @@ static int dissect_l3(struct m_pkt *p)
 	switch (p->l3_proto) {
 	case ETH_P_IP:
 		ip4 = (struct ip *)data;
-		if (ip4->ip_v != 4 ||
-		    data_len < 20 /* min */ ||
+		if (data_len < 20 /* min */ ||
+		    ip4->ip_v != 4 ||
 		    ip4->ip_hl < 5 ||
 		    data_len < ip4->ip_hl * 4 ||
 		    ntohs(ip4->ip_len) < ip4->ip_hl * 4) {
