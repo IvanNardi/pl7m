@@ -298,9 +298,13 @@ static int dissect_l2(int datalink_type, struct m_pkt *p)
 	case DLT_PPP:
 	case DLT_C_HDLC:
 		if (data[l2_offset + 0] == 0x0f || data[l2_offset + 0] == 0x8f) {
+			if (data_len < l2_offset + 4)
+				return -1;
 			l3_offset = 4;
 			l3_proto = ntohs(*((u_int16_t *)&data[l2_offset + 2]));
 		} else {
+			if (data_len < l2_offset + 2)
+				return -1;
 			l3_offset = l2_offset + 2;
 			next = ntohs(*((u_int16_t *)&data[l2_offset + 0]));
 			switch (next) {
