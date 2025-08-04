@@ -43,3 +43,5 @@ jobs:
           ./run-fuzzer.sh
           make clean && CFLAGS="-DPL7M_USE_SIMPLEST_MUTATOR -DPL7M_USE_64K_PACKETS" make
           ./run-fuzzer.sh
+          make clean && CFLAGS="-DPL7M_ENABLE_RANDOMIZE_PORTS" make
+          ./run-fuzzer.sh
