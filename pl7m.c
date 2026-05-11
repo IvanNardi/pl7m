@@ -755,7 +755,7 @@ static int is_gtp_u(unsigned char *gtp_buffer, int gtp_buffer_len,
 {
 	struct gtp_header *gtp_h;
 	struct udphdr *udp_h;
-	uint16_t new_layer_len = 0;
+	int new_layer_len = 0;
 	unsigned char sub_proto;
 
 	if (p->l4_proto != IPPROTO_UDP ||
